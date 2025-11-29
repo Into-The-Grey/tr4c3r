@@ -1,0 +1,99 @@
+name: Dependency Updates
+
+on:
+  schedule:
+    # Run weekly on Mondays at 9am UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-dependencies:
+    name: Update Python Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pipenv
+        run: pip install pipenv
+
+      - name: Update dependencies
+        run: |
+          pipenv update --dev
+          pipenv requirements > requirements.txt
+          pipenv requirements --dev > requirements-dev.txt
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet Pipfile.lock; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Pull Request
+        if: steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore(deps): update Python dependencies"
+          title: "chore(deps): Weekly dependency update"
+          body: |
+            ## 📦 Automated Dependency Update
+            
+            This PR updates Python dependencies to their latest versions.
+            
+            ### Changes
+            - Updated `Pipfile.lock` with latest compatible versions
+            - Regenerated `requirements.txt` and `requirements-dev.txt`
+            
+            ### Checklist
+            - [ ] Review updated packages for breaking changes
+            - [ ] Run tests locally if needed
+            - [ ] Merge when CI passes
+            
+            ---
+            *This PR was automatically created by the dependency update workflow.*
+          branch: deps/weekly-update
+          delete-branch: true
+          labels: |
+            dependencies
+            automated
+
+  check-outdated:
+    name: Report Outdated Packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pipenv
+        run: pip install pipenv
+
+      - name: Install dependencies
+        run: pipenv install --dev
+
+      - name: Check outdated packages
+        run: |
+          echo "## 📦 Outdated Packages Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | Current | Latest | Type |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|---------|--------|------|" >> $GITHUB_STEP_SUMMARY
+          pipenv update --outdated 2>/dev/null | tail -n +2 | while read line; do
+            if [ ! -z "$line" ]; then
+              echo "| $line |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done || echo "All packages are up to date! ✅" >> $GITHUB_STEP_SUMMARY

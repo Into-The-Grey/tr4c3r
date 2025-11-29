@@ -1,0 +1,122 @@
+name: Nightly Build
+
+on:
+  schedule:
+    # Run at 2 AM UTC every day
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  nightly-test:
+    name: Nightly Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pipenv
+          pipenv install --dev --system
+
+      - name: Run full test suite with coverage
+        run: |
+          pip install pytest-cov pytest-timeout
+          pytest tests/ -v --cov=src --cov-report=xml --cov-report=html --timeout=60
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-coverage
+          path: |
+            coverage.xml
+            htmlcov/
+
+  nightly-build:
+    name: Nightly Build Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pipenv pyinstaller
+          pipenv install --dev --system
+
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x scripts/build-portable.sh
+          ./scripts/build-portable.sh
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: .\scripts\build-portable.bat
+
+      - name: Upload nightly build
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.os }}
+          path: |
+            releases/*.tar.gz
+            releases/*.zip
+          retention-days: 3
+
+  notify-failure:
+    name: Notify on Failure
+    needs: [nightly-test, nightly-build]
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+      - name: Create failure issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `🚨 Nightly Build Failed - ${new Date().toISOString().split('T')[0]}`;
+            const body = `
+            ## Nightly Build Failure Report
+            
+            The nightly build workflow has failed.
+            
+            **Run ID:** ${context.runId}
+            **Workflow:** ${context.workflow}
+            **Triggered by:** ${context.eventName}
+            
+            [View Failed Run](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+            
+            Please investigate and fix the issues.
+            `;
+            
+            // Check if similar issue exists
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'nightly-failure',
+              per_page: 10
+            });
+            
+            if (issues.data.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['bug', 'nightly-failure', 'automated']
+              });
+            }

@@ -1,0 +1,85 @@
+# PR Labeler Configuration
+# Labels PRs based on file paths
+
+# Core module changes
+core:
+  - changed-files:
+    - any-glob-to-any-file: 'src/core/**/*'
+
+# API changes
+api:
+  - changed-files:
+    - any-glob-to-any-file: 'src/api/**/*'
+
+# Search module changes
+search:
+  - changed-files:
+    - any-glob-to-any-file: 'src/search/**/*'
+
+# Security changes
+security:
+  - changed-files:
+    - any-glob-to-any-file: 'src/security/**/*'
+
+# Storage changes
+storage:
+  - changed-files:
+    - any-glob-to-any-file: 'src/storage/**/*'
+
+# Visualization changes
+visualization:
+  - changed-files:
+    - any-glob-to-any-file: 'src/visualization/**/*'
+
+# Integration changes
+integrations:
+  - changed-files:
+    - any-glob-to-any-file: 'src/integrations/**/*'
+
+# Test changes
+tests:
+  - changed-files:
+    - any-glob-to-any-file: 'tests/**/*'
+
+# Documentation changes
+documentation:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'docs/**/*'
+      - '*.md'
+      - 'README.md'
+
+# Configuration changes
+configuration:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'config/**/*'
+      - 'pyproject.toml'
+      - 'Pipfile'
+      - 'Pipfile.lock'
+      - '.flake8'
+      - '.gitignore'
+
+# CI/CD changes
+ci/cd:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.github/**/*'
+      - 'Makefile'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+
+# Build/Release changes
+build:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'scripts/**/*'
+      - 'portable/**/*'
+
+# Docker changes
+docker:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - '.dockerignore'

@@ -1,0 +1,137 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'src/**/*.py'
+      - 'README.md'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'src/**/*.py'
+      - 'README.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-docs:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install mkdocs mkdocs-material mkdocstrings[python] mkdocs-gen-files mkdocs-literate-nav mkdocs-section-index
+
+      - name: Create MkDocs config if not exists
+        run: |
+          if [ ! -f mkdocs.yml ]; then
+            cat > mkdocs.yml << 'EOF'
+          site_name: TR4C3R Documentation
+          site_description: Advanced OSINT Platform for Digital Investigations
+          site_url: https://into-the-grey.github.io/tr4c3r
+          repo_url: https://github.com/Into-The-Grey/tr4c3r
+          repo_name: Into-The-Grey/tr4c3r
+          
+          theme:
+            name: material
+            palette:
+              - scheme: slate
+                primary: deep purple
+                accent: cyan
+                toggle:
+                  icon: material/brightness-4
+                  name: Switch to light mode
+              - scheme: default
+                primary: deep purple
+                accent: cyan
+                toggle:
+                  icon: material/brightness-7
+                  name: Switch to dark mode
+            features:
+              - navigation.tabs
+              - navigation.sections
+              - navigation.expand
+              - navigation.top
+              - search.suggest
+              - search.highlight
+              - content.code.copy
+          
+          plugins:
+            - search
+            - mkdocstrings:
+                handlers:
+                  python:
+                    options:
+                      show_source: true
+          
+          nav:
+            - Home: README.md
+            - Getting Started:
+              - Installation: docs/DOCKER.md
+              - API Quickstart: docs/API_QUICKSTART.md
+            - User Guide:
+              - Search Modules: docs/SEARCH_MODULES_COMPARISON.md
+              - Email Search: docs/email_search.md
+              - Name Search: docs/name_search.md
+              - Phone Search: docs/phone_search.md
+            - API Reference:
+              - REST API: docs/API.md
+              - Authentication: docs/AUTHENTICATION.md
+            - Security:
+              - Guidelines: docs/SECURITY_GUIDELINES_SUMMARY.md
+              - Data Encryption: docs/DATA_ENCRYPTION.md
+              - Ethics & Safety: docs/ETHICS_SAFETY_LEVELS.md
+            - Integrations:
+              - Overview: docs/INTEGRATIONS.md
+              - Utilities: docs/UTILITIES.md
+          
+          markdown_extensions:
+            - pymdownx.highlight:
+                anchor_linenums: true
+            - pymdownx.superfences
+            - pymdownx.tabbed:
+                alternate_style: true
+            - admonition
+            - pymdownx.details
+            - attr_list
+            - md_in_html
+          EOF
+          fi
+
+      - name: Build docs
+        run: mkdocs build --strict
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+  deploy-docs:
+    name: Deploy to GitHub Pages
+    needs: build-docs
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
