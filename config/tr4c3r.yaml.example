@@ -1,0 +1,78 @@
+# TR4C3R Configuration File (YAML)
+# Copy this to tr4c3r.yaml and customize as needed
+
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  file: logs/tr4c3r.log
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+search:
+  max_variants: 50  # Maximum username variants to generate
+  timeout_seconds: 30  # HTTP request timeout
+  max_concurrent_requests: 10  # Parallel search limit
+  user_agent: "TR4C3R OSINT Tool/1.0"
+
+database:
+  path: tr4c3r.db  # SQLite database file
+  cache_ttl_seconds: 3600  # Cache TTL (1 hour)
+
+# API Keys (can also be set via environment variables)
+api_keys:
+  github_token: ""  # GitHub Personal Access Token
+  reddit_user_agent: "tr4c3r-bot/0.1"
+  hibp_api_key: ""  # HaveIBeenPwned API key
+  hunter_api_key: ""  # Hunter.io API key
+  numverify_api_key: ""  # Numverify phone validation
+  pipl_api_key: ""  # Pipl people search
+  clearbit_api_key: ""  # Clearbit enrichment
+  twilio_account_sid: ""  # Twilio phone lookup
+  twilio_auth_token: ""
+
+# Site configurations for username search
+sites:
+  github:
+    enabled: true
+    url_template: "https://github.com/{username}"
+    api_url: "https://api.github.com/users/{username}"
+  
+  reddit:
+    enabled: true
+    url_template: "https://www.reddit.com/user/{username}"
+  
+  twitter:
+    enabled: true
+    url_template: "https://twitter.com/{username}"
+  
+  instagram:
+    enabled: true
+    url_template: "https://www.instagram.com/{username}"
+  
+  linkedin:
+    enabled: true
+    url_template: "https://www.linkedin.com/in/{username}"
+  
+  facebook:
+    enabled: true
+    url_template: "https://www.facebook.com/{username}"
+  
+  youtube:
+    enabled: true
+    url_template: "https://www.youtube.com/@{username}"
+  
+  tiktok:
+    enabled: true
+    url_template: "https://www.tiktok.com/@{username}"
+  
+  twitch:
+    enabled: true
+    url_template: "https://www.twitch.tv/{username}"
+  
+  medium:
+    enabled: true
+    url_template: "https://medium.com/@{username}"
+
+# Correlation engine settings
+correlation:
+  min_confidence: 0.5  # Minimum confidence for correlations
+  max_depth: 3  # Maximum graph traversal depth
+  enable_visualization: true  # Generate graph visualizations

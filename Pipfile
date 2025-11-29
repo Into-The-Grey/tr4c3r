@@ -1,0 +1,42 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[requires]
+python_version = "3.14"
+
+[packages]
+httpx = "*"
+beautifulsoup4 = "*"
+rapidfuzz = "*"
+phonenumbers = "*"
+python-dotenv = "*"
+networkx = "*"
+pyvis = "*"
+pyyaml = "*"
+tomli = "*"
+fastapi = "*"
+uvicorn = {extras = ["standard"], version = "*"}
+python-jose = {extras = ["cryptography"], version = "*"}
+passlib = {extras = ["bcrypt"], version = "*"}
+python-multipart = "*"
+pillow = "*"
+opencv-python = "*"
+pyjwt = "*"
+pydantic = {extras = ["email"], version = "*"}
+email-validator = "*"
+cryptography = "*"
+
+[dev-packages]
+pytest = "*"
+pytest-asyncio = "*"
+pytest-httpx = "*"
+black = "*"
+flake8 = "*"
+isort = "*"
+mypy = "*"
+
+[scripts]
+lint = "black --check . && isort --check-only . && flake8"
+test = "pytest"

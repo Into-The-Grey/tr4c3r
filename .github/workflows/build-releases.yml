@@ -1,0 +1,149 @@
+name: Build Portable Releases
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pipenv pyinstaller
+          pipenv install --dev --system
+          
+      - name: Build portable package
+        run: |
+          chmod +x scripts/build-portable.sh
+          ./scripts/build-portable.sh --platform linux
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tr4c3r-linux-x64
+          path: releases/*.tar.gz
+          
+  build-macos-intel:
+    runs-on: macos-13  # Intel runner
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pipenv pyinstaller
+          pipenv install --dev --system
+          
+      - name: Build portable package
+        run: |
+          chmod +x scripts/build-portable.sh
+          ./scripts/build-portable.sh --platform macos
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tr4c3r-macos-x64
+          path: releases/*.tar.gz
+
+  build-macos-arm:
+    runs-on: macos-14  # Apple Silicon runner
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pipenv pyinstaller
+          pipenv install --dev --system
+          
+      - name: Build portable package
+        run: |
+          chmod +x scripts/build-portable.sh
+          ./scripts/build-portable.sh --platform macos
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tr4c3r-macos-arm64
+          path: releases/*.tar.gz
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pipenv pyinstaller
+          pipenv install --dev --system
+          
+      - name: Build portable package
+        run: |
+          .\scripts\build-portable.bat
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tr4c3r-windows-x64
+          path: releases/*.zip
+
+  create-release:
+    needs: [build-linux, build-macos-intel, build-macos-arm, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          
+      - name: Display structure
+        run: ls -R artifacts
+        
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/tr4c3r-linux-x64/*.tar.gz
+            artifacts/tr4c3r-macos-x64/*.tar.gz
+            artifacts/tr4c3r-macos-arm64/*.tar.gz
+            artifacts/tr4c3r-windows-x64/*.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

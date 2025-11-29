@@ -1,0 +1,136 @@
+# TR4C3R Docker Compose Configuration
+# Usage: docker-compose up -d
+
+version: '3.8'
+
+services:
+  # ============================================
+  # TR4C3R API Server
+  # ============================================
+  tr4c3r-api:
+    build:
+      context: .
+      target: production
+    container_name: tr4c3r-api
+    restart: unless-stopped
+    ports:
+      - "${TR4C3R_PORT:-8000}:8000"
+    environment:
+      - TR4C3R_ENV=production
+      - TR4C3R_LOG_LEVEL=${TR4C3R_LOG_LEVEL:-INFO}
+      - TR4C3R_MASTER_KEY=${TR4C3R_MASTER_KEY:-change-me-in-production}
+      - TR4C3R_JWT_SECRET=${TR4C3R_JWT_SECRET:-change-me-in-production}
+      - TR4C3R_DATABASE_URL=postgresql://tr4c3r:${POSTGRES_PASSWORD:-tr4c3r}@postgres:5432/tr4c3r
+      - TR4C3R_REDIS_URL=redis://redis:6379/0
+    volumes:
+      - tr4c3r-data:/app/data
+      - tr4c3r-logs:/app/logs
+      - tr4c3r-exports:/app/exports
+      - ./config:/app/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - tr4c3r-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # PostgreSQL Database
+  # ============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: tr4c3r-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=tr4c3r
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-tr4c3r}
+      - POSTGRES_DB=tr4c3r
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - tr4c3r-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tr4c3r -d tr4c3r"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ============================================
+  # Redis Cache
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: tr4c3r-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - tr4c3r-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # Worker (Background Jobs)
+  # ============================================
+  tr4c3r-worker:
+    build:
+      context: .
+      target: production
+    container_name: tr4c3r-worker
+    restart: unless-stopped
+    command: ["python", "-m", "src.cli", "worker", "--queue", "default"]
+    environment:
+      - TR4C3R_ENV=production
+      - TR4C3R_LOG_LEVEL=${TR4C3R_LOG_LEVEL:-INFO}
+      - TR4C3R_MASTER_KEY=${TR4C3R_MASTER_KEY:-change-me-in-production}
+      - TR4C3R_DATABASE_URL=postgresql://tr4c3r:${POSTGRES_PASSWORD:-tr4c3r}@postgres:5432/tr4c3r
+      - TR4C3R_REDIS_URL=redis://redis:6379/0
+    volumes:
+      - tr4c3r-data:/app/data
+      - tr4c3r-logs:/app/logs
+      - tr4c3r-exports:/app/exports
+      - ./config:/app/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - tr4c3r-network
+    profiles:
+      - full
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  tr4c3r-network:
+    driver: bridge
+    name: tr4c3r-network
+
+# ============================================
+# Volumes
+# ============================================
+volumes:
+  tr4c3r-data:
+    name: tr4c3r-data
+  tr4c3r-logs:
+    name: tr4c3r-logs
+  tr4c3r-exports:
+    name: tr4c3r-exports
+  postgres-data:
+    name: tr4c3r-postgres-data
+  redis-data:
+    name: tr4c3r-redis-data
