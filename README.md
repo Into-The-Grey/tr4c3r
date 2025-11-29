@@ -231,7 +231,7 @@ See [API Documentation](docs/API.md) for complete reference.
 
 ## 🏗️ Project Structure
 
-```
+```text
 tr4c3r/
 ├── src/
 │   ├── api/              # REST API (FastAPI)
