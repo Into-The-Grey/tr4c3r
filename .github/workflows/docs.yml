@@ -7,6 +7,7 @@ on:
       - 'docs/**'
       - 'src/**/*.py'
       - 'README.md'
+      - 'mkdocs.yml'
       - '.github/workflows/docs.yml'
   pull_request:
     branches: [main]
@@ -14,7 +15,13 @@ on:
       - 'docs/**'
       - 'src/**/*.py'
       - 'README.md'
+      - 'mkdocs.yml'
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy to GitHub Pages'
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -22,8 +29,11 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: pages-${{ github.ref }}
   cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: '3.11'
 
 jobs:
   build-docs:
@@ -31,18 +41,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # For git info in docs
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install mkdocs mkdocs-material mkdocstrings[python] mkdocs-gen-files mkdocs-literate-nav mkdocs-section-index
+          pip install mkdocs mkdocs-material mkdocstrings[python] \
+            mkdocs-gen-files mkdocs-literate-nav mkdocs-section-index \
+            mkdocs-git-revision-date-localized-plugin mkdocs-minify-plugin \
+            mkdocs-awesome-pages-plugin pymdown-extensions
 
-      - name: Create MkDocs config if not exists
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v4
+
+      - name: Create MkDocs config
         run: |
           if [ ! -f mkdocs.yml ]; then
             cat > mkdocs.yml << 'EOF'
@@ -51,38 +70,57 @@ jobs:
           site_url: https://into-the-grey.github.io/tr4c3r
           repo_url: https://github.com/Into-The-Grey/tr4c3r
           repo_name: Into-The-Grey/tr4c3r
+          edit_uri: edit/main/docs/
           
           theme:
             name: material
+            custom_dir: docs/overrides
+            logo: assets/logo.png
+            favicon: assets/favicon.ico
             palette:
-              - scheme: slate
+              - media: "(prefers-color-scheme: dark)"
+                scheme: slate
                 primary: deep purple
                 accent: cyan
                 toggle:
                   icon: material/brightness-4
                   name: Switch to light mode
-              - scheme: default
+              - media: "(prefers-color-scheme: light)"
+                scheme: default
                 primary: deep purple
                 accent: cyan
                 toggle:
                   icon: material/brightness-7
                   name: Switch to dark mode
             features:
+              - navigation.instant
+              - navigation.tracking
               - navigation.tabs
+              - navigation.tabs.sticky
               - navigation.sections
               - navigation.expand
               - navigation.top
+              - navigation.footer
               - search.suggest
               - search.highlight
+              - search.share
               - content.code.copy
+              - content.code.annotate
+              - content.tabs.link
+              - toc.follow
           
           plugins:
-            - search
+            - search:
+                lang: en
             - mkdocstrings:
                 handlers:
                   python:
                     options:
                       show_source: true
+                      show_root_heading: true
+                      heading_level: 2
+            - minify:
+                minify_html: true
           
           nav:
             - Home: README.md
@@ -106,32 +144,119 @@ jobs:
               - Utilities: docs/UTILITIES.md
           
           markdown_extensions:
+            - abbr
+            - admonition
+            - attr_list
+            - def_list
+            - footnotes
+            - md_in_html
+            - tables
+            - toc:
+                permalink: true
+            - pymdownx.arithmatex:
+                generic: true
+            - pymdownx.betterem
+            - pymdownx.caret
+            - pymdownx.details
+            - pymdownx.emoji:
+                emoji_index: !!python/name:material.extensions.emoji.twemoji
+                emoji_generator: !!python/name:material.extensions.emoji.to_svg
             - pymdownx.highlight:
                 anchor_linenums: true
-            - pymdownx.superfences
+                line_spans: __span
+                pygments_lang_class: true
+            - pymdownx.inlinehilite
+            - pymdownx.keys
+            - pymdownx.magiclink
+            - pymdownx.mark
+            - pymdownx.smartsymbols
+            - pymdownx.superfences:
+                custom_fences:
+                  - name: mermaid
+                    class: mermaid
+                    format: !!python/name:pymdownx.superfences.fence_code_format
             - pymdownx.tabbed:
                 alternate_style: true
-            - admonition
-            - pymdownx.details
-            - attr_list
-            - md_in_html
+            - pymdownx.tasklist:
+                custom_checkbox: true
+            - pymdownx.tilde
+          
+          extra:
+            social:
+              - icon: fontawesome/brands/github
+                link: https://github.com/Into-The-Grey/tr4c3r
+            generator: false
+            version:
+              provider: mike
+          
+          extra_css:
+            - stylesheets/extra.css
           EOF
           fi
+          
+          # Create overrides directory
+          mkdir -p docs/overrides docs/stylesheets docs/assets
+          
+          # Create minimal extra CSS
+          cat > docs/stylesheets/extra.css << 'EOF'
+          :root {
+            --md-primary-fg-color: #7c3aed;
+            --md-accent-fg-color: #06b6d4;
+          }
+          EOF
 
-      - name: Build docs
-        run: mkdocs build --strict
+      - name: Build documentation
+        run: mkdocs build --strict --verbose
 
+      - name: Check for broken links
+        run: |
+          pip install linkchecker
+          set +e
+          linkchecker site/ --check-extern --ignore-url="^mailto:" > linkcheck.txt 2>&1
+          LINKCHECK_EXIT=$?
+          BROKEN_LINKS=$(grep -E "URL.*error" linkcheck.txt || true)
+          if [ "$LINKCHECK_EXIT" -ne 0 ]; then
+            echo "## ⚠️ Broken Links Detected" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -E "URL.*error" linkcheck.txt >> $GITHUB_STEP_SUMMARY || echo "No details found." >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Full linkchecker output:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat linkcheck.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "No broken links detected." >> $GITHUB_STEP_SUMMARY
+          fi
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: site/
 
+      - name: Generate summary
+        run: |
+          echo "## 📚 Documentation Build" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Pages:** $(find site -name '*.html' | wc -l)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Size:** $(du -sh site | cut -f1)" >> $GITHUB_STEP_SUMMARY
+
   deploy-docs:
     name: Deploy to GitHub Pages
     needs: build-docs
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event.inputs.deploy == 'true'
+    environment:
+      name: documentation
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Deployment summary
+        run: |
+          echo "## 🚀 Documentation Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**URL:** ${{ steps.deployment.outputs.page_url }}" >> $GITHUB_STEP_SUMMARY

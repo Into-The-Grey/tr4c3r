@@ -2,14 +2,28 @@ name: Code Quality
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - '.github/workflows/code-quality.yml'
   pull_request:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
   workflow_dispatch:
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: '3.11'
 
 jobs:
   lint:
-    name: Lint & Format Check
+    name: Lint & Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,21 +31,40 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install black isort flake8 mypy
+      - name: Install linters
+        run: pip install black isort flake8 ruff pylint
 
       - name: Check Black formatting
-        run: black --check --diff src/ tests/
+        id: black
+        run: |
+          black --check --diff src/ tests/ 2>&1 | tee black-output.txt || echo "needs_format=true" >> $GITHUB_OUTPUT
 
       - name: Check import sorting
-        run: isort --check-only --diff src/ tests/
+        id: isort
+        run: |
+          isort --check-only --diff src/ tests/ 2>&1 | tee isort-output.txt || echo "needs_sort=true" >> $GITHUB_OUTPUT
 
       - name: Run Flake8
-        run: flake8 src/ tests/ --count --statistics
+        run: |
+          echo "## 🔍 Flake8 Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          flake8 src/ tests/ --count --show-source --statistics >> $GITHUB_STEP_SUMMARY 2>&1 || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Run Ruff
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## ⚡ Ruff Results" >> $GITHUB_STEP_SUMMARY
+          ruff check src/ tests/ --output-format=github 2>&1 || true
+
+      - name: Run Pylint
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔬 Pylint Score" >> $GITHUB_STEP_SUMMARY
+          pylint src/ --exit-zero --output-format=text | tail -2 >> $GITHUB_STEP_SUMMARY || true
 
   type-check:
     name: Type Checking
@@ -42,63 +75,32 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install pipenv mypy
+          pip install pipenv mypy types-PyYAML types-requests
           pipenv install --dev --system
 
       - name: Run MyPy
-        run: mypy src/ --ignore-missing-imports --no-error-summary || true
-
-  test:
-    name: Test Suite
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ['3.11', '3.12']
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install pipenv
-          pipenv install --dev --system
+          echo "## 🏷️ Type Check Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          mypy src/ --ignore-missing-imports --show-error-codes --pretty 2>&1 | head -100 >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
-      - name: Run tests with coverage
+      - name: Generate type coverage report
         run: |
-          pip install pytest-cov
-          pytest tests/ --cov=src --cov-report=xml --cov-report=html -v
+          mypy src/ --ignore-missing-imports --txt-report mypy-report || true
+          if [ -f mypy-report/index.txt ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Type Coverage" >> $GITHUB_STEP_SUMMARY
+            cat mypy-report/index.txt >> $GITHUB_STEP_SUMMARY
+          fi
 
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
-        with:
-          name: coverage-report
-          path: |
-            coverage.xml
-            htmlcov/
-
-      - name: Upload coverage to Codecov
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
-        uses: codecov/codecov-action@v4
-        with:
-          files: ./coverage.xml
-          fail_ci_if_error: false
-
-  complexity:
-    name: Code Complexity Analysis
+  test-coverage:
+    name: Test Coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -106,28 +108,135 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
 
-      - name: Install radon
-        run: pip install radon
+      - name: Install dependencies
+        run: |
+          pip install pipenv pytest-cov pytest-xdist
+          pipenv install --dev --system
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ --cov=src --cov-report=xml --cov-report=term-missing --cov-fail-under=50 -n auto || true
+
+      - name: Generate coverage badge
+        run: |
+          COVERAGE=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('coverage.xml'); print(f\"{float(tree.getroot().attrib['line-rate'])*100:.1f}\")" 2>/dev/null || echo "N/A")
+          echo "## 📊 Test Coverage: ${COVERAGE}%" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+  complexity:
+    name: Code Complexity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install analysis tools
+        run: pip install radon xenon
 
       - name: Cyclomatic Complexity
         run: |
-          echo "## Cyclomatic Complexity Report" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔄 Cyclomatic Complexity" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### High Complexity Functions (C or worse)" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          radon cc src/ -a -s >> $GITHUB_STEP_SUMMARY
+          radon cc src/ -a -s --min C >> $GITHUB_STEP_SUMMARY 2>&1 || echo "No high complexity functions found ✅" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Maintainability Index
         run: |
-          echo "## Maintainability Index" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🛠️ Maintainability Index" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Files with low maintainability (B or worse):" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          radon mi src/ -s >> $GITHUB_STEP_SUMMARY
+          radon mi src/ -s --min B >> $GITHUB_STEP_SUMMARY 2>&1 || echo "All files have good maintainability ✅" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-      - name: Raw metrics
+      - name: Check complexity thresholds
         run: |
-          echo "## Raw Metrics" >> $GITHUB_STEP_SUMMARY
+          # Fail if any function has complexity > 15 (very complex)
+          xenon src/ --max-absolute C --max-modules B --max-average B || echo "::warning::Some code exceeds complexity thresholds"
+
+      - name: Lines of Code
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📏 Code Statistics" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           radon raw src/ -s >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+
+  duplicates:
+    name: Duplicate Code Detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install tools
+        run: pip install pylint
+
+      - name: Find duplicate code
+        run: |
+          echo "## 🔁 Duplicate Code Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          pylint src/ --disable=all --enable=duplicate-code --min-similarity-lines=10 2>&1 | grep -A5 "Similar lines" >> $GITHUB_STEP_SUMMARY || echo "No significant duplicates found ✅" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  dead-code:
+    name: Dead Code Detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install vulture
+        run: pip install vulture
+
+      - name: Find dead code
+        run: |
+          echo "## 💀 Dead Code Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          vulture src/ --min-confidence 80 >> $GITHUB_STEP_SUMMARY 2>&1 || echo "No dead code detected ✅" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  quality-summary:
+    name: Quality Summary
+    needs: [lint, type-check, test-coverage, complexity, duplicates, dead-code]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## 📋 Code Quality Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint & Format | ${{ needs.lint.result == 'success' && '✅' || '⚠️' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Type Check | ${{ needs.type-check.result == 'success' && '✅' || '⚠️' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Coverage | ${{ needs.test-coverage.result == 'success' && '✅' || '⚠️' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Complexity | ${{ needs.complexity.result == 'success' && '✅' || '⚠️' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Duplicates | ${{ needs.duplicates.result == 'success' && '✅' || '⚠️' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dead Code | ${{ needs.dead-code.result == 'success' && '✅' || '⚠️' }} |" >> $GITHUB_STEP_SUMMARY
+

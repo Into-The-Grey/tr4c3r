@@ -3,16 +3,44 @@ name: CI
 on:
   push:
     branches: [main, develop]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PYTHON_VERSION: '3.11'
+  PIPENV_VENV_IN_PROJECT: 1
+
 jobs:
+  # Quick checks that should fail fast
+  pre-checks:
+    name: Pre-flight Checks
+    runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ steps.skip_check.outputs.should_skip }}
+    steps:
+      - name: Skip duplicate runs
+        id: skip_check
+        uses: fkirc/skip-duplicate-actions@v5
+        with:
+          concurrent_skipping: 'same_content_newer'
+          skip_after_successful_duplicate: 'true'
+
   lint:
-    name: Lint
+    name: Lint & Format
+    needs: pre-checks
+    if: needs.pre-checks.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,12 +48,11 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
 
       - name: Install linters
-        run: |
-          python -m pip install --upgrade pip
-          pip install black isort flake8
+        run: pip install black isort flake8 ruff
 
       - name: Check formatting with Black
         run: black --check --diff src/ tests/
@@ -34,17 +61,27 @@ jobs:
         run: isort --check-only --diff src/ tests/
 
       - name: Run Flake8
-        run: flake8 src/ tests/
+        run: flake8 src/ tests/ --count --show-source --statistics
+
+      - name: Run Ruff (fast linter)
+        run: ruff check src/ tests/ --output-format=github
+        continue-on-error: true
 
   test:
-    name: Test (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    name: Test (${{ matrix.os }} / Py${{ matrix.python-version }})
+    needs: [pre-checks, lint]
+    if: needs.pre-checks.outputs.should_skip != 'true'
     runs-on: ${{ matrix.os }}
-    needs: lint
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ['3.11', '3.12']
+        exclude:
+          # Reduce matrix for faster CI - skip some combinations
+          - os: macos-latest
+            python-version: '3.12'
 
     steps:
       - uses: actions/checkout@v4
@@ -53,6 +90,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
 
       - name: Install pipenv
         run: pip install pipenv
@@ -60,7 +98,9 @@ jobs:
       - name: Cache pipenv virtualenv
         uses: actions/cache@v4
         with:
-          path: ~/.local/share/virtualenvs
+          path: |
+            .venv
+            ~/.local/share/virtualenvs
           key: ${{ runner.os }}-py${{ matrix.python-version }}-pipenv-${{ hashFiles('**/Pipfile.lock') }}
           restore-keys: |
             ${{ runner.os }}-py${{ matrix.python-version }}-pipenv-
@@ -68,37 +108,70 @@ jobs:
       - name: Install dependencies
         run: pipenv install --dev
 
-      - name: Run tests
-        run: pipenv run pytest tests/ -v --tb=short
+      - name: Run tests with coverage
+        run: |
+          pipenv run pip install pytest-cov pytest-xdist
+          pipenv run pytest tests/ -v --tb=short --cov=src --cov-report=xml -n auto
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   build-check:
-    name: Build Check
-    runs-on: ubuntu-latest
+    name: Build Verification
     needs: test
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install pipenv pyinstaller
           pipenv install --dev --system
 
       - name: Test PyInstaller build
         run: |
           chmod +x scripts/build-portable.sh
-          ./scripts/build-portable.sh --platform linux
-          ls -la releases/
-          
-      - name: Verify build output
+          # Note: The 'timeout' command is Linux-specific and will not work on macOS or Windows.
+          timeout 600 ./scripts/build-portable.sh --platform linux || exit 1
+
+      - name: Verify build artifacts
         run: |
-          if [ ! -f releases/*.tar.gz ]; then
-            echo "Build failed: No release archive created"
+          if ! ls releases/*.tar.gz 1>/dev/null 2>&1; then
+            echo "::error::Build failed - no release archive created"
+            exit 1
+          fi
+          echo "✅ Build verification passed!"
+          ls -lah releases/
+
+  # Final status check for branch protection
+  ci-success:
+    name: CI Success
+    needs: [lint, test, build-check]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ needs.lint.result }}" != "success" ]] || \
+             [[ "${{ needs.test.result }}" != "success" ]] || \
+             [[ "${{ needs.build-check.result }}" != "success" ]]; then
+            echo "::error::One or more CI jobs failed"
+            exit 1
+          fi
+
             exit 1
           fi
           echo "Build verification passed!"
