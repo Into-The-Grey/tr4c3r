@@ -67,7 +67,7 @@ jobs:
           echo "Coverage: $COVERAGE%"
 
       - name: Upload test artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: nightly-test-results
           path: |
@@ -134,7 +134,7 @@ jobs:
           fi
 
       - name: Upload nightly build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: nightly-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
@@ -167,7 +167,7 @@ jobs:
           pytest tests/ --benchmark-only --benchmark-json=benchmark.json || true
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: benchmark-results
           path: benchmark.json

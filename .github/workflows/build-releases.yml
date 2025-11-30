@@ -77,7 +77,7 @@ jobs:
           ./scripts/build-portable.sh --platform linux
           
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: tr4c3r-${{ env.VERSION }}-linux-x64
           path: releases/*.tar.gz
@@ -114,7 +114,7 @@ jobs:
           ./scripts/build-portable.sh --platform linux
           
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: tr4c3r-${{ env.VERSION }}-linux-arm64
           path: releases/*.tar.gz
@@ -158,7 +158,7 @@ jobs:
           ./scripts/build-portable.sh --platform macos
           
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: tr4c3r-${{ env.VERSION }}-macos-x64
           path: releases/*.tar.gz
@@ -202,7 +202,7 @@ jobs:
           ./scripts/build-portable.sh --platform macos
           
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: tr4c3r-${{ env.VERSION }}-macos-arm64
           path: releases/*.tar.gz
@@ -244,7 +244,7 @@ jobs:
         run: .\scripts\build-portable.bat
           
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: tr4c3r-${{ env.VERSION }}-windows-x64
           path: releases/*.zip
