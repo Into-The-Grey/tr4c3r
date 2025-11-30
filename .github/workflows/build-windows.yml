@@ -1,0 +1,125 @@
+name: Build Windows Executable
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.0.0)'
+        required: true
+        default: '1.0.0'
+      include_cli:
+        description: 'Include CLI executable'
+        type: boolean
+        default: true
+      create_installer:
+        description: 'Create NSIS installer'
+        type: boolean
+        default: false
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install httpx beautifulsoup4 rapidfuzz phonenumbers python-dotenv
+          pip install networkx pyvis pyyaml tomli
+          pip install fastapi uvicorn[standard]
+          pip install python-jose[cryptography] passlib[bcrypt] python-multipart
+          pip install pillow opencv-python pyjwt
+          pip install pydantic[email] email-validator cryptography
+
+      - name: Create default config
+        run: |
+          if (!(Test-Path -Path "config")) { New-Item -ItemType Directory -Path "config" }
+          if (!(Test-Path -Path "config/tr4c3r.yaml")) {
+            Copy-Item "config/tr4c3r.yaml.example" "config/tr4c3r.yaml" -ErrorAction SilentlyContinue
+          }
+        shell: pwsh
+
+      - name: Create placeholder icon if missing
+        run: |
+          if (!(Test-Path -Path "docs/assets")) { 
+            New-Item -ItemType Directory -Path "docs/assets" -Force 
+          }
+          # Create a simple placeholder if no icon exists
+          if (!(Test-Path -Path "docs/assets/icon.ico")) {
+            Write-Host "No icon found, build will proceed without custom icon"
+          }
+        shell: pwsh
+
+      - name: Build GUI executable
+        run: |
+          cd portable
+          pyinstaller tr4c3r-windows.spec --noconfirm --clean
+        shell: pwsh
+
+      - name: Build CLI executable
+        if: ${{ inputs.include_cli }}
+        run: |
+          cd portable
+          pyinstaller tr4c3r.spec --noconfirm --clean
+        shell: pwsh
+
+      - name: Create release directory
+        run: |
+          $version = "${{ inputs.version }}"
+          $releaseName = "TR4C3R-$version-windows-x64"
+          
+          New-Item -ItemType Directory -Path "release/$releaseName" -Force
+          
+          # Copy GUI build
+          if (Test-Path "portable/dist/TR4C3R") {
+            Copy-Item -Path "portable/dist/TR4C3R/*" -Destination "release/$releaseName" -Recurse -Force
+          }
+          
+          # Copy CLI build if exists
+          if (Test-Path "portable/dist/tr4c3r") {
+            Copy-Item -Path "portable/dist/tr4c3r/*" -Destination "release/$releaseName/cli" -Recurse -Force
+          }
+          
+          # Copy additional files
+          Copy-Item "README.md" "release/$releaseName/" -ErrorAction SilentlyContinue
+          Copy-Item "LICENSE" "release/$releaseName/" -ErrorAction SilentlyContinue
+          
+          # Create empty data directory
+          New-Item -ItemType Directory -Path "release/$releaseName/data" -Force
+          New-Item -ItemType Directory -Path "release/$releaseName/logs" -Force
+        shell: pwsh
+
+      - name: Create ZIP archive
+        run: |
+          $version = "${{ inputs.version }}"
+          $releaseName = "TR4C3R-$version-windows-x64"
+          
+          Compress-Archive -Path "release/$releaseName" -DestinationPath "release/$releaseName.zip" -Force
+        shell: pwsh
+
+      - name: Upload GUI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TR4C3R-${{ inputs.version }}-windows-x64
+          path: release/TR4C3R-${{ inputs.version }}-windows-x64.zip
+          retention-days: 30
+
+      - name: Create Release (if tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release/TR4C3R-${{ inputs.version }}-windows-x64.zip
+          draft: true
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

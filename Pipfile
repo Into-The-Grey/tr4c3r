@@ -4,7 +4,7 @@ url = "https://pypi.org/simple"
 verify_ssl = true
 
 [requires]
-python_version = "3.14"
+python_version = "3.11"
 
 [packages]
 httpx = "*"
@@ -27,6 +27,7 @@ pyjwt = "*"
 pydantic = {extras = ["email"], version = "*"}
 email-validator = "*"
 cryptography = "*"
+pyinstaller = "*"
 
 [dev-packages]
 pytest = "*"

@@ -1,3 +1,22 @@
+[project]
+name = "tr4c3r"
+version = "1.0.0"
+description = "TR4C3R - OSINT Investigation Tool"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Into-The-Grey"}
+]
+keywords = ["osint", "investigation", "security", "reconnaissance"]
+
+[project.scripts]
+tr4c3r = "src.cli:main"
+tr4c3r-gui = "src.gui.main_window:main"
+
+[project.gui-scripts]
+tr4c3r-gui = "src.gui.main_window:main"
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["tests"]
