@@ -221,7 +221,7 @@ jobs:
 
       - name: Create/Update failure issue
         if: steps.status.outputs.status == 'failure'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const date = new Date().toISOString().split('T')[0];
@@ -272,7 +272,7 @@ jobs:
 
       - name: Close old failure issues on success
         if: steps.status.outputs.status == 'success'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const { data: issues } = await github.rest.issues.listForRepo({
