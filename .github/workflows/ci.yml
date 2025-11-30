@@ -171,7 +171,4 @@ jobs:
             echo "::error::One or more CI jobs failed"
             exit 1
           fi
-
-            exit 1
-          fi
-          echo "Build verification passed!"
+          echo "✅ All CI jobs passed successfully!"
