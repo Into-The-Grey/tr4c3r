@@ -5,21 +5,66 @@ on:
     branches: [main]
     tags:
       - 'v*'
+    paths:
+      - 'src/**'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - 'Pipfile*'
+      - '.github/workflows/docker.yml'
   pull_request:
     branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'docker-compose.yml'
   workflow_dispatch:
+    inputs:
+      push_image:
+        description: 'Push image to registry'
+        type: boolean
+        default: false
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  lint-dockerfile:
+    name: Lint Dockerfile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: warning
+          format: sarif
+          output-file: hadolint-results.sarif
+
+      - name: Upload Hadolint SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: hadolint-results.sarif
+          category: hadolint
+
   build-and-push:
-    name: Build and Push Docker Image
+    name: Build & Push Image
+    needs: lint-dockerfile
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
+      image_tags: ${{ steps.meta.outputs.tags }}
 
     steps:
       - name: Checkout repository
@@ -30,6 +75,10 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:master
+            network=host
 
       - name: Log in to Container Registry
         if: github.event_name != 'pull_request'
@@ -50,49 +99,130 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=sha,prefix=
+            type=sha,prefix=sha-,format=short
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+          labels: |
+            org.opencontainers.image.title=TR4C3R
+            org.opencontainers.image.description=Advanced OSINT Platform
+            org.opencontainers.image.vendor=Into-The-Grey
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ github.event_name != 'pull_request' || github.event.inputs.push_image == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VCS_REF=${{ github.sha }}
+            VERSION=${{ steps.meta.outputs.version }}
 
-      - name: Generate SBOM
+      - name: Generate artifact attestation
         if: github.event_name != 'pull_request'
-        uses: anchore/sbom-action@v0
+        uses: actions/attest-build-provenance@v1
         with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          format: spdx-json
-          output-file: sbom.spdx.json
-
-      - name: Upload SBOM
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom
-          path: sbom.spdx.json
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
 
   scan-image:
-    name: Scan Docker Image
+    name: Security Scan Image
     needs: build-and-push
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
+    permissions:
+      security-events: write
     steps:
+      - uses: actions/checkout@v4
+
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ github.repository }}:${{ github.sha }}
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository }}@${{ needs.build-and-push.outputs.image_digest }}
           format: 'sarif'
           output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'os,library'
 
       - name: Upload Trivy scan results
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-results.sarif'
+          category: trivy
+
+      - name: Run Grype scanner
+        uses: anchore/scan-action@v4
+        id: grype
+        with:
+          image: ${{ env.REGISTRY }}/${{ github.repository }}@${{ needs.build-and-push.outputs.image_digest }}
+          fail-build: false
+          severity-cutoff: high
+
+      - name: Upload Grype SBOM
+        uses: actions/upload-artifact@v5
+        with:
+          name: grype-sbom
+          path: ${{ steps.grype.outputs.sbom }}
+
+  test-image:
+    name: Test Docker Image
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pull built image
+        run: docker pull ${{ env.REGISTRY }}/${{ github.repository }}@${{ needs.build-and-push.outputs.image_digest }}
+
+      - name: Test container starts
+        run: |
+          docker run --rm -d --name tr4c3r-test \
+            ${{ env.REGISTRY }}/${{ github.repository }}@${{ needs.build-and-push.outputs.image_digest }} \
+            sleep 30
+          
+          # Wait for container to be ready
+          sleep 5
+          
+          # Check container is running
+          docker ps | grep tr4c3r-test
+          
+          # Cleanup
+          docker stop tr4c3r-test
+
+      - name: Test CLI help
+        run: |
+          docker run --rm \
+            ${{ env.REGISTRY }}/${{ github.repository }}@${{ needs.build-and-push.outputs.image_digest }} \
+            python -m src.cli --help
+
+  docker-summary:
+    name: Docker Build Summary
+    needs: [build-and-push, scan-image, test-image]
+    if: always() && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## 🐳 Docker Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ env.REGISTRY }}/${{ github.repository }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Digest:** \`${{ needs.build-and-push.outputs.image_digest }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Tags" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ needs.build-and-push.outputs.image_tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Build & Push | ${{ needs.build-and-push.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Scan | ${{ needs.scan-image.result == 'success' && '✅' || '⚠️' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Integration Test | ${{ needs.test-image.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
