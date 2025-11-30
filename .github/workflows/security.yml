@@ -159,7 +159,7 @@ jobs:
       - name: Install pip-licenses
         run: |
           pip install pipenv pip-licenses
-          pipenv install --dev --system
+          pipenv install --system
 
       - name: Check licenses
         run: |
