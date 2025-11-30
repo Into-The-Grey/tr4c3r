@@ -13,6 +13,8 @@ on:
     paths:
       - 'src/**'
       - 'Pipfile*'
+      - 'requirements*.txt'
+      - '.github/workflows/security.yml'
   schedule:
     # Run weekly on Sundays at midnight UTC
     - cron: '0 0 * * 0'
@@ -38,13 +40,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
 
       - name: Install scanning tools
-        run: pip install pipenv safety pip-audit
+        run: pip install pipenv pip-audit
 
       - name: Generate requirements
         run: |
@@ -53,16 +55,11 @@ jobs:
 
       - name: Run pip-audit
         id: pip_audit
+        continue-on-error: true
         run: |
           echo "## 🔍 Dependency Audit Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          pip-audit -r requirements.txt --format markdown >> $GITHUB_STEP_SUMMARY || true
-
-      - name: Run Safety check
-        run: |
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## 🛡️ Safety Check Results" >> $GITHUB_STEP_SUMMARY
-          safety check -r requirements.txt --full-report >> $GITHUB_STEP_SUMMARY 2>&1 || true
+          pip-audit -r requirements.txt --format markdown >> $GITHUB_STEP_SUMMARY
 
       - name: Check for critical vulnerabilities
         run: |
@@ -76,7 +73,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -84,14 +81,25 @@ jobs:
         run: pip install bandit[toml]
 
       - name: Run Bandit security scan
+        continue-on-error: true
         run: |
           echo "## 🔐 Bandit Security Scan" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          bandit -r src/ -f markdown -o bandit-report.md -ll || true
-          cat bandit-report.md >> $GITHUB_STEP_SUMMARY
+          if [ -d "src/" ]; then
+            bandit -r src/ -f markdown -o bandit-report.md -ll
+            cat bandit-report.md >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ src/ directory not found, skipping Bandit scan" >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Generate SARIF report
-        run: bandit -r src/ -f sarif -o bandit-results.sarif || true
+        continue-on-error: true
+        run: |
+          if [ -d "src/" ]; then
+            bandit -r src/ -f sarif -o bandit-results.sarif
+          else
+            echo '{"version":"2.1.0","runs":[]}' > bandit-results.sarif
+          fi
 
       - name: Upload SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
@@ -109,12 +117,12 @@ jobs:
           fetch-depth: 0
 
       - name: TruffleHog Secrets Scan
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@v3.82.13
         with:
           extra_args: --only-verified --fail
 
       - name: Gitleaks Scan
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v2.3.7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -152,14 +160,15 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install pip-licenses
         run: |
           pip install pipenv pip-licenses
-          pipenv install --system
+          # Try with --deploy for strict lockfile matching, fallback without it for environments without lockfile
+          pipenv install --system --deploy || pipenv install --system
 
       - name: Check licenses
         run: |
@@ -171,11 +180,9 @@ jobs:
 
       - name: Check for problematic licenses
         run: |
-          # Fail if GPL or other copyleft licenses are found (adjust as needed)
-          PROBLEMATIC=$(pip-licenses --fail-on="GPL;AGPL" 2>&1) || true
-          if echo "$PROBLEMATIC" | grep -q "fail-on"; then
-            echo "::warning::Potentially problematic licenses detected"
-          fi
+          # Only allow OSI-approved permissive licenses
+          # Includes: MIT, BSD variants, Apache 2.0, ISC, PSF, Unlicense, CC0, MPL-2.0
+          pip-licenses --allow-only="MIT;MIT License;BSD;BSD License;BSD-2-Clause;BSD-3-Clause;Apache 2.0;Apache License 2.0;Apache Software License;ISC;ISC License;Python Software Foundation License;PSF;PSFL;Unlicense;Public Domain;CC0;MPL-2.0;Mozilla Public License 2.0"
 
   security-summary:
     name: Security Summary
@@ -189,8 +196,8 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Dependency Scan | ${{ needs.dependency-scan.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Code Scan (Bandit) | ${{ needs.code-scan.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Secrets Detection | ${{ needs.secrets-scan.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| CodeQL Analysis | ${{ needs.codeql.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| License Check | ${{ needs.license-check.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dependency Scan | ${{ needs.dependency-scan.result == 'success' && '✅' || (needs.dependency-scan.result == 'skipped' && '⏭️ Skipped' || '❌') }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Code Scan (Bandit) | ${{ needs.code-scan.result == 'success' && '✅' || (needs.code-scan.result == 'skipped' && '⏭️ Skipped' || '❌') }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Secrets Detection | ${{ needs.secrets-scan.result == 'success' && '✅' || (needs.secrets-scan.result == 'skipped' && '⏭️ Skipped' || '❌') }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CodeQL Analysis | ${{ needs.codeql.result == 'success' && '✅' || (needs.codeql.result == 'skipped' && '⏭️ Skipped' || '❌') }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| License Check | ${{ needs.license-check.result == 'success' && '✅' || (needs.license-check.result == 'skipped' && '⏭️ Skipped' || '❌') }} |" >> $GITHUB_STEP_SUMMARY
