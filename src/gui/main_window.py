@@ -74,7 +74,7 @@ class Colors:
 class CyberText(tk.Text):
     """Custom styled text widget with dark theme."""
 
-    def __init__(self, parent: tk.Widget, **kwargs: Any):
+    def __init__(self, parent: tk.Misc, **kwargs: Any):
         defaults = {
             "bg": Colors.BG_DARK,
             "fg": Colors.TEXT_PRIMARY,
