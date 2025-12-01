@@ -108,7 +108,7 @@ jobs:
         shell: pwsh
 
       - name: Upload GUI artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: TR4C3R-${{ inputs.version }}-windows-x64
           path: release/TR4C3R-${{ inputs.version }}-windows-x64.zip
